@@ -3,6 +3,7 @@
 #
 # This source code is licensed under the terms described in the LICENSE file in
 # the root directory of this source tree.
+import json
 from typing import Tuple
 
 from llama_models.llama3.api.chat_format import ChatFormat
@@ -21,6 +22,13 @@ from llama_models.llama3.prompt_templates import (
 from llama_models.sku_list import resolve_model
 
 from llama_stack.providers.utils.inference import supported_inference_models
+
+
+def completion_request_to_prompt(
+    request: CompletionRequest, formatter: ChatFormat
+) -> str:
+    model_input = formatter.encode_content(request.content)
+    return formatter.tokenizer.decode(model_input.tokens)
 
 
 def chat_completion_request_to_prompt(
@@ -63,11 +71,25 @@ def chat_completion_request_to_messages(
         and is_multimodal(model.core_model_id)
     ):
         # llama3.1 and llama3.2 multimodal models follow the same tool prompt format
-        return augment_messages_for_tools_llama_3_1(request)
+        messages = augment_messages_for_tools_llama_3_1(request)
     elif model.model_family == ModelFamily.llama3_2:
-        return augment_messages_for_tools_llama_3_2(request)
+        messages = augment_messages_for_tools_llama_3_2(request)
     else:
-        return request.messages
+        messages = request.messages
+
+    if fmt := request.response_format:
+        if fmt.type == ResponseFormatType.json_schema.value:
+            messages.append(
+                UserMessage(
+                    content=f"Please respond in JSON format with the schema: {json.dumps(fmt.schema)}"
+                )
+            )
+        elif fmt.type == ResponseFormatType.grammar.value:
+            raise NotImplementedError("Grammar response format not supported yet")
+        else:
+            raise ValueError(f"Unknown response format {fmt.type}")
+
+    return messages
 
 
 def augment_messages_for_tools_llama_3_1(

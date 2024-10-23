@@ -6,11 +6,13 @@
 
 from typing import Any, AsyncGenerator, Dict, List
 
+from llama_stack.apis.datasetio.datasetio import DatasetIO
 from llama_stack.distribution.datatypes import RoutingTable
 
 from llama_stack.apis.memory import *  # noqa: F403
 from llama_stack.apis.inference import *  # noqa: F403
 from llama_stack.apis.safety import *  # noqa: F403
+from llama_stack.apis.datasetio import *  # noqa: F403
 
 
 class MemoryRouter(Memory):
@@ -70,11 +72,12 @@ class InferenceRouter(Inference):
     async def register_model(self, model: ModelDef) -> None:
         await self.routing_table.register_model(model)
 
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
         tool_prompt_format: Optional[ToolPromptFormat] = ToolPromptFormat.json,
@@ -88,20 +91,22 @@ class InferenceRouter(Inference):
             tools=tools or [],
             tool_choice=tool_choice,
             tool_prompt_format=tool_prompt_format,
+            response_format=response_format,
             stream=stream,
             logprobs=logprobs,
         )
         provider = self.routing_table.get_provider_impl(model)
         if stream:
-            return (chunk async for chunk in provider.chat_completion(**params))
+            return (chunk async for chunk in await provider.chat_completion(**params))
         else:
-            return provider.chat_completion(**params)
+            return await provider.chat_completion(**params)
 
-    def completion(
+    async def completion(
         self,
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
@@ -110,13 +115,14 @@ class InferenceRouter(Inference):
             model=model,
             content=content,
             sampling_params=sampling_params,
+            response_format=response_format,
             stream=stream,
             logprobs=logprobs,
         )
         if stream:
-            return (chunk async for chunk in provider.completion(**params))
+            return (chunk async for chunk in await provider.completion(**params))
         else:
-            return provider.completion(**params)
+            return await provider.completion(**params)
 
     async def embeddings(
         self,
@@ -155,4 +161,34 @@ class SafetyRouter(Safety):
             shield_type=shield_type,
             messages=messages,
             params=params,
+        )
+
+
+class DatasetIORouter(DatasetIO):
+    def __init__(
+        self,
+        routing_table: RoutingTable,
+    ) -> None:
+        self.routing_table = routing_table
+
+    async def initialize(self) -> None:
+        pass
+
+    async def shutdown(self) -> None:
+        pass
+
+    async def get_rows_paginated(
+        self,
+        dataset_id: str,
+        rows_in_page: int,
+        page_token: Optional[str] = None,
+        filter_condition: Optional[str] = None,
+    ) -> PaginatedRowsResult:
+        return await self.routing_table.get_provider_impl(
+            dataset_id
+        ).get_rows_paginated(
+            dataset_id=dataset_id,
+            rows_in_page=rows_in_page,
+            page_token=page_token,
+            filter_condition=filter_condition,
         )

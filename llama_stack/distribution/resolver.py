@@ -12,6 +12,8 @@ from llama_stack.providers.datatypes import *  # noqa: F403
 from llama_stack.distribution.datatypes import *  # noqa: F403
 
 from llama_stack.apis.agents import Agents
+from llama_stack.apis.datasetio import DatasetIO
+from llama_stack.apis.datasets import Datasets
 from llama_stack.apis.inference import Inference
 from llama_stack.apis.inspect import Inspect
 from llama_stack.apis.memory import Memory
@@ -38,6 +40,8 @@ def api_protocol_map() -> Dict[Api, Any]:
         Api.safety: Safety,
         Api.shields: Shields,
         Api.telemetry: Telemetry,
+        Api.datasets: Datasets,
+        Api.datasetio: DatasetIO,
     }
 
 
@@ -55,7 +59,7 @@ class ProviderWithSpec(Provider):
 
 
 # TODO: this code is not very straightforward to follow and needs one more round of refactoring
-async def resolve_impls_with_routing(run_config: StackRunConfig) -> Dict[Api, Any]:
+async def resolve_impls(run_config: StackRunConfig) -> Dict[Api, Any]:
     """
     Does two things:
     - flatmaps, sorts and resolves the providers in dependency order

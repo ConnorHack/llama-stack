@@ -37,7 +37,7 @@ from llama_stack.providers.utils.telemetry.tracing import (
 from llama_stack.distribution.datatypes import *  # noqa: F403
 
 from llama_stack.distribution.request_headers import set_request_provider_data
-from llama_stack.distribution.resolver import resolve_impls_with_routing
+from llama_stack.distribution.resolver import resolve_impls
 
 from .endpoints import get_all_api_endpoints
 
@@ -203,7 +203,7 @@ async def maybe_await(value):
 
 async def sse_generator(event_gen):
     try:
-        async for item in event_gen:
+        async for item in await event_gen:
             yield create_sse_event(item)
             await asyncio.sleep(0.01)
     except asyncio.CancelledError:
@@ -276,7 +276,7 @@ def main(
 
     app = FastAPI()
 
-    impls = asyncio.run(resolve_impls_with_routing(config))
+    impls = asyncio.run(resolve_impls(config))
     if Api.telemetry in impls:
         setup_logger(impls[Api.telemetry])
 
@@ -288,6 +288,9 @@ def main(
         apis_to_serve = set(impls.keys())
 
     for inf in builtin_automatically_routed_apis():
+        # if we do not serve the corresponding router API, we should not serve the routing table API
+        if inf.router_api.value not in apis_to_serve:
+            continue
         apis_to_serve.add(inf.routing_table_api.value)
 
     apis_to_serve.add("inspect")

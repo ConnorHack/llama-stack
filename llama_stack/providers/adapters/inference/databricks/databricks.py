@@ -48,21 +48,23 @@ class DatabricksInferenceAdapter(ModelRegistryHelper, Inference):
     async def shutdown(self) -> None:
         pass
 
-    def completion(
+    async def completion(
         self,
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
         raise NotImplementedError()
 
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
         tool_prompt_format: Optional[ToolPromptFormat] = ToolPromptFormat.json,
@@ -84,7 +86,7 @@ class DatabricksInferenceAdapter(ModelRegistryHelper, Inference):
         if stream:
             return self._stream_chat_completion(request, client)
         else:
-            return self._nonstream_chat_completion(request, client)
+            return await self._nonstream_chat_completion(request, client)
 
     async def _nonstream_chat_completion(
         self, request: ChatCompletionRequest, client: OpenAI

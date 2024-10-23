@@ -74,11 +74,35 @@ class ChatCompletionResponseEvent(BaseModel):
     stop_reason: Optional[StopReason] = None
 
 
+class ResponseFormatType(Enum):
+    json_schema = "json_schema"
+    grammar = "grammar"
+
+
+class JsonResponseFormat(BaseModel):
+    type: Literal[ResponseFormatType.json_schema.value] = (
+        ResponseFormatType.json_schema.value
+    )
+    schema: Dict[str, Any]
+
+
+class GrammarResponseFormat(BaseModel):
+    type: Literal[ResponseFormatType.grammar.value] = ResponseFormatType.grammar.value
+    bnf: Dict[str, Any]
+
+
+ResponseFormat = Annotated[
+    Union[JsonResponseFormat, GrammarResponseFormat],
+    Field(discriminator="type"),
+]
+
+
 @json_schema_type
 class CompletionRequest(BaseModel):
     model: str
     content: InterleavedTextMedia
     sampling_params: Optional[SamplingParams] = SamplingParams()
+    response_format: Optional[ResponseFormat] = None
 
     stream: Optional[bool] = False
     logprobs: Optional[LogProbConfig] = None
@@ -88,7 +112,8 @@ class CompletionRequest(BaseModel):
 class CompletionResponse(BaseModel):
     """Completion response."""
 
-    completion_message: CompletionMessage
+    content: str
+    stop_reason: StopReason
     logprobs: Optional[List[TokenLogProbs]] = None
 
 
@@ -106,6 +131,7 @@ class BatchCompletionRequest(BaseModel):
     model: str
     content_batch: List[InterleavedTextMedia]
     sampling_params: Optional[SamplingParams] = SamplingParams()
+    response_format: Optional[ResponseFormat] = None
     logprobs: Optional[LogProbConfig] = None
 
 
@@ -113,7 +139,7 @@ class BatchCompletionRequest(BaseModel):
 class BatchCompletionResponse(BaseModel):
     """Batch completion response."""
 
-    completion_message_batch: List[CompletionMessage]
+    batch: List[CompletionResponse]
 
 
 @json_schema_type
@@ -128,6 +154,7 @@ class ChatCompletionRequest(BaseModel):
     tool_prompt_format: Optional[ToolPromptFormat] = Field(
         default=ToolPromptFormat.json
     )
+    response_format: Optional[ResponseFormat] = None
 
     stream: Optional[bool] = False
     logprobs: Optional[LogProbConfig] = None
@@ -165,7 +192,7 @@ class BatchChatCompletionRequest(BaseModel):
 
 @json_schema_type
 class BatchChatCompletionResponse(BaseModel):
-    completion_message_batch: List[CompletionMessage]
+    batch: List[ChatCompletionResponse]
 
 
 @json_schema_type
@@ -181,14 +208,13 @@ class ModelStore(Protocol):
 class Inference(Protocol):
     model_store: ModelStore
 
-    # This method is not `async def` because it can result in either an
-    # `AsyncGenerator` or a `CompletionResponse` depending on the value of `stream`.
     @webmethod(route="/inference/completion")
-    def completion(
+    async def completion(
         self,
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> Union[CompletionResponse, CompletionResponseStreamChunk]: ...
@@ -196,7 +222,7 @@ class Inference(Protocol):
     # This method is not `async def` because it can result in either an
     # `AsyncGenerator` or a `ChatCompletionResponse` depending on the value of `stream`.
     @webmethod(route="/inference/chat_completion")
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
@@ -205,6 +231,7 @@ class Inference(Protocol):
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
         tool_prompt_format: Optional[ToolPromptFormat] = ToolPromptFormat.json,
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> Union[ChatCompletionResponse, ChatCompletionResponseStreamChunk]: ...

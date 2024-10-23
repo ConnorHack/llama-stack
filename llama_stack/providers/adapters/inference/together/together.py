@@ -59,12 +59,13 @@ class TogetherInferenceAdapter(
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
         raise NotImplementedError()
 
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
@@ -72,6 +73,7 @@ class TogetherInferenceAdapter(
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
         tool_prompt_format: Optional[ToolPromptFormat] = ToolPromptFormat.json,
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
@@ -94,6 +96,7 @@ class TogetherInferenceAdapter(
             tools=tools or [],
             tool_choice=tool_choice,
             tool_prompt_format=tool_prompt_format,
+            response_format=response_format,
             stream=stream,
             logprobs=logprobs,
         )
@@ -101,7 +104,7 @@ class TogetherInferenceAdapter(
         if stream:
             return self._stream_chat_completion(request, client)
         else:
-            return self._nonstream_chat_completion(request, client)
+            return await self._nonstream_chat_completion(request, client)
 
     async def _nonstream_chat_completion(
         self, request: ChatCompletionRequest, client: Together
@@ -128,11 +131,23 @@ class TogetherInferenceAdapter(
             yield chunk
 
     def _get_params(self, request: ChatCompletionRequest) -> dict:
+        options = get_sampling_options(request)
+        if fmt := request.response_format:
+            if fmt.type == ResponseFormatType.json_schema.value:
+                options["response_format"] = {
+                    "type": "json_object",
+                    "schema": fmt.schema,
+                }
+            elif fmt.type == ResponseFormatType.grammar.value:
+                raise NotImplementedError("Grammar response format not supported yet")
+            else:
+                raise ValueError(f"Unknown response format {fmt.type}")
+
         return {
             "model": self.map_to_provider_model(request.model),
             "prompt": chat_completion_request_to_prompt(request, self.formatter),
             "stream": request.stream,
-            **get_sampling_options(request),
+            **options,
         }
 
     async def embeddings(

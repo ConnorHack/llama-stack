@@ -51,17 +51,18 @@ class FireworksInferenceAdapter(ModelRegistryHelper, Inference):
     async def shutdown(self) -> None:
         pass
 
-    def completion(
+    async def completion(
         self,
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
         raise NotImplementedError()
 
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
@@ -69,6 +70,7 @@ class FireworksInferenceAdapter(ModelRegistryHelper, Inference):
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
         tool_prompt_format: Optional[ToolPromptFormat] = ToolPromptFormat.json,
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> AsyncGenerator:
@@ -79,6 +81,7 @@ class FireworksInferenceAdapter(ModelRegistryHelper, Inference):
             tools=tools or [],
             tool_choice=tool_choice,
             tool_prompt_format=tool_prompt_format,
+            response_format=response_format,
             stream=stream,
             logprobs=logprobs,
         )
@@ -87,7 +90,7 @@ class FireworksInferenceAdapter(ModelRegistryHelper, Inference):
         if stream:
             return self._stream_chat_completion(request, client)
         else:
-            return self._nonstream_chat_completion(request, client)
+            return await self._nonstream_chat_completion(request, client)
 
     async def _nonstream_chat_completion(
         self, request: ChatCompletionRequest, client: Fireworks
@@ -115,6 +118,20 @@ class FireworksInferenceAdapter(ModelRegistryHelper, Inference):
 
         options = get_sampling_options(request)
         options.setdefault("max_tokens", 512)
+
+        if fmt := request.response_format:
+            if fmt.type == ResponseFormatType.json_schema.value:
+                options["response_format"] = {
+                    "type": "json_object",
+                    "schema": fmt.schema,
+                }
+            elif fmt.type == ResponseFormatType.grammar.value:
+                options["response_format"] = {
+                    "type": "grammar",
+                    "grammar": fmt.bnf,
+                }
+            else:
+                raise ValueError(f"Unknown response format {fmt.type}")
         return {
             "model": self.map_to_provider_model(request.model),
             "prompt": prompt,

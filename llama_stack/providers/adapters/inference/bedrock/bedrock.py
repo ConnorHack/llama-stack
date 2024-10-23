@@ -47,11 +47,12 @@ class BedrockInferenceAdapter(ModelRegistryHelper, Inference):
     async def shutdown(self) -> None:
         self.client.close()
 
-    def completion(
+    async def completion(
         self,
         model: str,
         content: InterleavedTextMedia,
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         stream: Optional[bool] = False,
         logprobs: Optional[LogProbConfig] = None,
     ) -> Union[CompletionResponse, CompletionResponseStreamChunk]:
@@ -283,11 +284,12 @@ class BedrockInferenceAdapter(ModelRegistryHelper, Inference):
             )
         return tool_config
 
-    def chat_completion(
+    async def chat_completion(
         self,
         model: str,
         messages: List[Message],
         sampling_params: Optional[SamplingParams] = SamplingParams(),
+        response_format: Optional[ResponseFormat] = None,
         # zero-shot tool definitions as input to the model
         tools: Optional[List[ToolDefinition]] = None,
         tool_choice: Optional[ToolChoice] = ToolChoice.auto,
