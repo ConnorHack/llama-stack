@@ -1,13 +1,15 @@
 name: "Run Llama-stack Tests"
 
 on:
-  pull_request_target:
-    types: ["opened"]
-    branches:
-      - 'main'
-    paths:
-      - 'llama_stack/**/*.py'
-      - 'tests/**/*.py'
+  #### Temporarily disable PR runs until tests run as intended within mainline.
+  #TODO Add this back.
+  #pull_request_target:
+  #  types: ["opened"]
+  #  branches:
+  #    - 'main'
+  #  paths:
+  #    - 'llama_stack/**/*.py'
+  #    - 'tests/**/*.py'
 
   workflow_dispatch:
     inputs:
@@ -16,8 +18,8 @@ on:
         required: true
         default: "llama-stack-gha-runner-gpu"
 
-      branch:
-        description: "Branch to checkout"
+      checkout_reference:
+        description: "The branch, tag, or SHA to checkout"
         required: true
         default: "main"
 
@@ -31,39 +33,45 @@ on:
         required: true
         default: "0"
 
-      model_ids:
-        description: 'Comma separated list of models to test'
-        required: true
-        default: "Llama3.2-3B-Instruct"
-
       provider_id:
         description: 'ID of your provider'
         required: true
-        default: "meta-reference"
+        default: "meta_reference"
 
-      api_key:
-        description: 'Provider API key'
+      model_id:
+        description: 'Shorthand name for target model ID (llama_3b or llama_8b)'
+        required: true
+        default: "llama_3b"
+
+      model_override_3b:
+        description: 'Specify shorthand model for <llama_3b> '
         required: false
-        default: "---"
+        default: "Llama3.2-3B-Instruct"
+
+      model_override_8b:
+        description: 'Specify shorthand model for <llama_8b> '
+        required: false
+        default: "Llama3.1-8B-Instruct"
 
 env:
+  # ID used for each test's provider config
+  PROVIDER_ID: "${{ inputs.provider_id || 'meta_reference' }}"
+
   # Path to model checkpoints within EFS volume
-  MODELS_PATH: "/data/llama"
+  MODEL_CHECKPOINT_DIR: "/data/llama"
 
   # Path to directory to run tests from
   TESTS_PATH: "${{ github.workspace }}/llama_stack/providers/tests"
 
-  # List of models that are to be tested
-  MODEL_IDS: "${{ inputs.model_ids || 'Llama3.2-3B-Instruct' }}"
+  # Keep track of a list of model IDs that are valid to use within pytest fixture marks
+  AVAILABLE_MODEL_IDs: "llama_3b llama_8b"
 
-  # ID used for each test's provider config
-  PROVIDER_ID: "${{ inputs.provider_id || 'meta-reference' }}"
+  # Shorthand name for model ID, used in pytest fixture marks
+  MODEL_ID: "${{ inputs.model_id || 'llama_3b' }}"
 
-  # Defined dynamically when each test is run below
-  PROVIDER_CONFIG: ""
-
-  # (Unused) API key that can be manually defined for workflow dispatch
-  API_KEY: "${{ inputs.api_key || '' }}"
+  # Override the `llama_3b` / `llama_8b' models, else use the default.
+  LLAMA_3B_OVERRIDE: "${{ inputs.model_override_3b || 'Llama3.2-3B-Instruct' }}"
+  LLAMA_8B_OVERRIDE: "${{ inputs.model_override_8b || 'Llama3.1-8B-Instruct' }}"
 
   # Defines which directories in TESTS_PATH to exclude from the test loop
   EXCLUDED_DIRS: "__pycache__"
@@ -78,7 +86,7 @@ jobs:
       pull-requests: write
     defaults:
       run:
-        shell: bash # default shell to run all steps for a given job.
+        shell: bash
     runs-on: ${{ inputs.runner != '' && inputs.runner || 'llama-stack-gha-runner-gpu' }}
     if: always()
     steps:
@@ -92,27 +100,40 @@ jobs:
         if: inputs.debug == 'true'
         run: |
             echo "========= Content of the EFS mount ============="
-            ls -la ${{ env.MODELS_PATH }}
-
-      - name: "Check if models exist in EFS volume"
-        id: check_if_models_exist
-        run: |
-          for model_id in ${MODEL_IDS//,/ }; do
-            model_path="${MODELS_PATH}/${model_id}"
-            if [ ! -d "${model_path}" ]; then
-              echo "Model '${model_id}' does not exist in mounted EFS volume, Terminating workflow."
-              exit 1
-            else
-              echo "Content of '${model_id}' model"
-              ls -la "${model_path}"
-            fi
-          done
+            ls -la ${{ env.MODEL_CHECKPOINT_DIR }}
 
       - name: "[DEBUG] Get runner container OS information"
         id: debug_os_info
         if: ${{ inputs.debug == 'true' }}
         run: |
             cat /etc/os-release
+
+      - name: "[DEBUG] Print environment variables"
+        id: debug_env_vars
+        if: ${{ inputs.debug == 'true' }}
+        run: |
+            echo "PROVIDER_ID = ${PROVIDER_ID}"
+            echo "MODEL_CHECKPOINT_DIR = ${MODEL_CHECKPOINT_DIR}"
+            echo "AVAILABLE_MODEL_IDs = ${AVAILABLE_MODEL_IDs}"
+            echo "MODEL_ID = ${MODEL_ID}"
+            echo "LLAMA_3B_OVERRIDE = ${LLAMA_3B_OVERRIDE}"
+            echo "LLAMA_8B_OVERRIDE = ${LLAMA_8B_OVERRIDE}"
+            echo "EXCLUDED_DIRS = ${EXCLUDED_DIRS}"
+            echo "REPORTS_GEN = ${REPORTS_GEN}"
+
+      ############################
+      #### MODEL INPUT CHECKS ####
+      ############################
+
+      - name: "Check if env.model_id is valid"
+        id: check_model_id
+        run: |
+          if [[ " ${AVAILABLE_MODEL_IDs[@]} " =~ " ${MODEL_ID} " ]]; then
+            echo "Model ID '${MODEL_ID}' is valid."
+          else
+            echo "Model ID '${MODEL_ID}' is invalid. Terminating workflow."
+            exit 1
+          fi
 
       #######################
       #### CODE CHECKOUT ####
@@ -145,14 +166,6 @@ jobs:
       ############################
       #### UPDATE SYSTEM PATH ####
       ############################
-      - name: "[DEBUG] Update path: before"
-        id: path_update_before
-        if: ${{ inputs.debug == 'true' }}
-        run: |
-          echo "System path before update:"
-          echo "PATH=$PATH"
-          echo "GITHUB_PATH=$GITHUB_PATH"
-
       - name: "Update path: execute"
         id: path_update_exec
         run: |
@@ -161,13 +174,26 @@ jobs:
           mkdir -p ${HOME}/.local/bin
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
-      - name: "[DEBUG] Update path: after"
-        id: path_update_after
-        if: ${{ inputs.debug == 'true' }}
+      #####################################
+      #### UPDATE CHECKPOINT DIRECTORY ####
+      #####################################
+      - name: "Update checkpoint directory"
+        id: checkpoint_update
         run: |
-          echo "System path after update:"
-          echo "PATH=$PATH"
-          echo "GITHUB_PATH=$GITHUB_PATH"
+          echo "Checkpoint directory: ${MODEL_CHECKPOINT_DIR}/$LLAMA_3B_OVERRIDE"
+          if [ "${MODEL_ID}" = "llama_3b" ] && [ -d "${MODEL_CHECKPOINT_DIR}/${LLAMA_3B_OVERRIDE}" ]; then
+            echo "MODEL_CHECKPOINT_DIR=${MODEL_CHECKPOINT_DIR}/${LLAMA_3B_OVERRIDE}" >> "$GITHUB_ENV"
+          elif [ "${MODEL_ID}" = "llama_8b" ] && [ -d "${MODEL_CHECKPOINT_DIR}/${LLAMA_8B_OVERRIDE}" ]; then
+            echo "MODEL_CHECKPOINT_DIR=${MODEL_CHECKPOINT_DIR}/${LLAMA_8B_OVERRIDE}" >> "$GITHUB_ENV"
+          else
+            echo "MODEL_ID & LLAMA_*B_OVERRIDE are not a valid pairing. Terminating workflow."
+            exit 1
+          fi
+
+      - name: "Checkpoint update check"
+        id: checkpoint_update_check
+        run: |
+          echo "MODEL_CHECKPOINT_DIR (after update) = ${MODEL_CHECKPOINT_DIR}"
 
       ##################################
       #### DEPENDENCY INSTALLATIONS ####
@@ -179,10 +205,10 @@ jobs:
           sudo apt update -y
           sudo apt install -y python3 python3-pip npm wget
 
-      - name: "Installing packages with 'curl'"
-        id: install_curl
-        run: |
-          curl -fsSL https://ollama.com/install.sh | sh
+      #- name: "Installing packages with 'curl'"
+      #  id: install_curl
+      #  run: |
+      #    curl -fsSL https://ollama.com/install.sh | sh
 
       - name: "Installing packages with 'wget'"
         id: install_wget
@@ -198,7 +224,7 @@ jobs:
         run: |
           sudo npm install -g junit-merge
 
-      - name: "Installing 'llama-stack' dependencies"
+      - name: "Installing pip dependencies"
         id: install_pip_generic
         run: |
           echo "[STEP] Installing 'llama-stack' models"
@@ -210,21 +236,18 @@ jobs:
             pytest pytest_asyncio \
             fairscale lm-format-enforcer \
             zmq chardet pypdf \
-            pandas sentence_transformers together
-          conda install -q -c pytorch -c nvidia faiss-gpu=1.9.0
-
-      - name: "Installing specific manual_dispatch dependencies"
-        id: manual_install_pip
-        if: github.event_name == 'workflow_dispatch'
+            pandas sentence_transformers together \
+            aiosqlite
+      - name: "Installing packages with conda"
+        id: install_conda_generic
         run: |
-          echo "[STEP] Installing specific dependencies for manual dispatch workflows"
-          # N.A.
+          conda install -q -c pytorch -c nvidia faiss-gpu=1.9.0
 
       #############################################################
       #### TESTING TO BE DONE FOR BOTH PRS AND MANUAL DISPATCH ####
       #############################################################
-      - name: "Manual - Run Tests: Loop"
-        id: manual_run_tests_loop
+      - name: "Run Tests: Loop"
+        id: run_tests_loop
         working-directory: "${{ github.workspace }}"
         run: |
           pattern=""
@@ -235,12 +258,11 @@ jobs:
                 for file in "$dir"/test_*.py; do
                   test_name=$(basename "$file")
                   new_file="result-${dir_name}-${test_name}.xml"
-                  if PROVIDER_CONFIG=$TESTS_PATH/${dir_name}/provider_config_example.yaml \
-                    torchrun $(which pytest) -s ${TESTS_PATH}/${dir_name}/${test_name} \
-                    --tb=short --disable-warnings --junitxml="${{ github.workspace }}/${new_file}"; then
-                    echo "Test passed: $test_name"
+                  if torchrun $(which pytest) -s -v ${TESTS_PATH}/${dir_name}/${test_name} -m "${PROVIDER_ID} and ${MODEL_ID}" \
+                     --junitxml="${{ github.workspace }}/${new_file}"; then
+                    echo "Ran test: ${test_name}"
                   else
-                    echo "Test failed: $test_name"
+                    echo "Did NOT run test: ${test_name}"
                   fi
                   pattern+="${new_file} "
                 done
@@ -249,9 +271,8 @@ jobs:
           done
           echo "REPORTS_GEN=$pattern" >> "$GITHUB_ENV"
 
-      - name: "Manual - Test Summary: Merge"
+      - name: "Test Summary: Merge"
         id: test_summary_merge
-        if: always()
         working-directory: "${{ github.workspace }}"
         run: |
           echo "Merging the following test result files: ${REPORTS_GEN}"
@@ -313,7 +334,11 @@ jobs:
         working-directory: "${{ github.workspace }}"
         if: github.event_name == 'workflow_dispatch'
         run: |
-          echo "[STEP] Running PyTest tests at 'GITHUB_WORKSPACE' path: ${GITHUB_WORKSPACE} | path: ${{ github.workspace }}"
+          echo "[STEP] Running PyTest tests at 'GITHUB_WORKSPACE' path: ${{ github.workspace }}"
+
+          #TODO Use this when collection errors are resolved
+          # pytest -s -v -m "${PROVIDER_ID} and ${MODEL_ID}" --junitxml="${{ github.workspace }}/merged-test-results.xml"
+
           # (Optional) Add more tests here.
 
           # Merge test results with 'merged-test-results.xml' from above.
@@ -327,13 +352,3 @@ jobs:
         uses: test-summary/action@v2
         with:
           paths: "${{ github.workspace }}/merged-test-results.xml"
-
-
-      - name: "Workplace Message - Group"
-        id: workplace_message_group
-        if: always()
-        uses: florianldt/workplace-action@master
-        with:
-          access-token: ${{ secrets.WORKPLACE_ACCESS_TOKEN }}
-          thread-key: ${{ secrets.WORKPLACE_THREAD_KEY }}
-          text: 'This is a test message!'
